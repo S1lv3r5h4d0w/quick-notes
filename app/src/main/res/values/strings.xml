@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Quick Notes</string>
+    <string name="widget_title">Notes</string>
+    <string name="widget_description">Simple notes and checklist</string>
+    <string name="empty">No notes yet. Tap + to add one.</string>
+    <string name="add_note">New note</string>
+    <string name="delete_note">Delete note</string>
+    <string name="hint">Type your note…</string>
+    <string name="type_checklist">Checklist</string>
+    <string name="type_note">Note</string>
+    <string name="tip">Checklist: each line becomes its own item.</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+</resources>
