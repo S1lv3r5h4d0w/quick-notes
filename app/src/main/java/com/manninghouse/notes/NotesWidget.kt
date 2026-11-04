@@ -15,16 +15,24 @@ class NotesWidget : AppWidgetProvider() {
         for (id in appWidgetIds) updateWidget(context, manager, id)
     }
 
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        for (id in appWidgetIds) NoteStore.removeWidget(context, id)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (intent.action != ACTION_ITEM) return
+        val widgetId = intent.getIntExtra(
+            AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID
+        )
+        if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
         val noteId = intent.getLongExtra(EXTRA_NOTE_ID, -1L)
         when (intent.getStringExtra(EXTRA_COMMAND)) {
-            CMD_TOGGLE -> NoteStore.toggle(context, noteId)
-            CMD_DELETE -> NoteStore.delete(context, noteId)
+            CMD_TOGGLE -> NoteStore.toggle(context, widgetId, noteId)
+            CMD_DELETE -> NoteStore.delete(context, widgetId, noteId)
             else -> return
         }
-        refreshAll(context)
+        refresh(context, widgetId)
     }
 
     companion object {
@@ -34,34 +42,43 @@ class NotesWidget : AppWidgetProvider() {
         private const val CMD_TOGGLE = "toggle"
         private const val CMD_DELETE = "delete"
 
-        fun refreshAll(context: Context) {
-            val manager = AppWidgetManager.getInstance(context)
-            val ids = manager.getAppWidgetIds(ComponentName(context, NotesWidget::class.java))
-            for (id in ids) updateWidget(context, manager, id)
+        fun allWidgetIds(context: Context): IntArray =
+            AppWidgetManager.getInstance(context)
+                .getAppWidgetIds(ComponentName(context, NotesWidget::class.java))
+
+        fun refresh(context: Context, widgetId: Int) {
+            updateWidget(context, AppWidgetManager.getInstance(context), widgetId)
         }
 
         private fun updateWidget(context: Context, manager: AppWidgetManager, widgetId: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_notes)
 
-            // "+" button opens the add-note popup
-            val addIntent = Intent(context, AddNoteActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            // Title (tap to rename this list)
+            views.setTextViewText(
+                R.id.widget_title,
+                NoteStore.getTitle(context, widgetId) ?: context.getString(R.string.widget_title)
+            )
             views.setOnClickPendingIntent(
-                R.id.add_button,
-                PendingIntent.getActivity(
-                    context, 0, addIntent,
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
+                R.id.widget_title,
+                activityIntent(context, widgetId, AddNoteActivity.ACTION_RENAME)
             )
 
-            // The list of notes
+            // "+" button opens the add-note popup for THIS widget
+            views.setOnClickPendingIntent(
+                R.id.add_button,
+                activityIntent(context, widgetId, AddNoteActivity.ACTION_ADD)
+            )
+
+            // This widget's notes
             val items = RemoteViews.RemoteCollectionItems.Builder().setHasStableIds(true)
-            for (note in NoteStore.load(context)) items.addItem(note.id, buildRow(context, note))
+            for (note in NoteStore.load(context, widgetId)) items.addItem(note.id, buildRow(context, note))
             views.setRemoteAdapter(R.id.notes_list, items.build())
             views.setEmptyView(R.id.notes_list, R.id.empty_text)
 
-            // Taps inside the list (check / delete) come back here
-            val template = Intent(context, NotesWidget::class.java).setAction(ACTION_ITEM)
+            // Taps inside the list (check / delete) come back here, tagged with this widget's id
+            val template = Intent(context, NotesWidget::class.java)
+                .setAction(ACTION_ITEM)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
             views.setPendingIntentTemplate(
                 R.id.notes_list,
                 PendingIntent.getBroadcast(
@@ -71,6 +88,17 @@ class NotesWidget : AppWidgetProvider() {
             )
 
             manager.updateAppWidget(widgetId, views)
+        }
+
+        private fun activityIntent(context: Context, widgetId: Int, action: String): PendingIntent {
+            val intent = Intent(context, AddNoteActivity::class.java)
+                .setAction(action)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            return PendingIntent.getActivity(
+                context, widgetId, intent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
         }
 
         private fun buildRow(context: Context, note: Note): RemoteViews {
