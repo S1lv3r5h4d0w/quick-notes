@@ -14,6 +14,7 @@ object NoteStore {
 
     private fun itemsKey(widgetId: Int) = "items_$widgetId"
     private fun titleKey(widgetId: Int) = "title_$widgetId"
+    private fun reorderKey(widgetId: Int) = "reorder_$widgetId"
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -85,6 +86,26 @@ object NoteStore {
         if (notes.removeAll { it.id == id }) save(context, widgetId, notes)
     }
 
+    /** Moves a note up (delta = -1) or down (delta = +1) one spot. */
+    fun move(context: Context, widgetId: Int, id: Long, delta: Int) {
+        val notes = load(context, widgetId)
+        val from = notes.indexOfFirst { it.id == id }
+        val to = from + delta
+        if (from < 0 || to < 0 || to >= notes.size) return
+        val tmp = notes[from]
+        notes[from] = notes[to]
+        notes[to] = tmp
+        save(context, widgetId, notes)
+    }
+
+    fun isReorderMode(context: Context, widgetId: Int): Boolean =
+        prefs(context).getBoolean(reorderKey(widgetId), false)
+
+    fun toggleReorderMode(context: Context, widgetId: Int) {
+        prefs(context).edit()
+            .putBoolean(reorderKey(widgetId), !isReorderMode(context, widgetId)).commit()
+    }
+
     fun getTitle(context: Context, widgetId: Int): String? =
         prefs(context).getString(titleKey(widgetId), null)
 
@@ -96,6 +117,10 @@ object NoteStore {
 
     /** Called when a widget is removed from the home screen. */
     fun removeWidget(context: Context, widgetId: Int) {
-        prefs(context).edit().remove(itemsKey(widgetId)).remove(titleKey(widgetId)).commit()
+        prefs(context).edit()
+            .remove(itemsKey(widgetId))
+            .remove(titleKey(widgetId))
+            .remove(reorderKey(widgetId))
+            .commit()
     }
 }

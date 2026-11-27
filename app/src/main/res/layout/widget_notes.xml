@@ -31,6 +31,15 @@
             android:textStyle="bold" />
 
         <ImageView
+            android:id="@+id/reorder_button"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="9dp"
+            android:background="@drawable/ripple_round"
+            android:src="@drawable/ic_reorder"
+            android:contentDescription="@string/reorder" />
+
+        <ImageView
             android:id="@+id/add_button"
             android:layout_width="40dp"
             android:layout_height="40dp"

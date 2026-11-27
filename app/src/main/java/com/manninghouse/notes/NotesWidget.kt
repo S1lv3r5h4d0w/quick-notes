@@ -7,6 +7,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Paint
+import android.os.Bundle
+import android.view.View
 import android.widget.RemoteViews
 
 class NotesWidget : AppWidgetProvider() {
@@ -15,32 +17,51 @@ class NotesWidget : AppWidgetProvider() {
         for (id in appWidgetIds) updateWidget(context, manager, id)
     }
 
+    // Fires when the widget's size changes, e.g. folding/unfolding the phone.
+    // Re-sending the full view here stops the other screen showing a stale list.
+    override fun onAppWidgetOptionsChanged(
+        context: Context, manager: AppWidgetManager, widgetId: Int, newOptions: Bundle
+    ) {
+        updateWidget(context, manager, widgetId)
+    }
+
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         for (id in appWidgetIds) NoteStore.removeWidget(context, id)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
-        if (intent.action != ACTION_ITEM) return
+        val action = intent.action
+        if (action != ACTION_ITEM && action != ACTION_TOGGLE_REORDER) return
         val widgetId = intent.getIntExtra(
             AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID
         )
         if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
-        val noteId = intent.getLongExtra(EXTRA_NOTE_ID, -1L)
-        when (intent.getStringExtra(EXTRA_COMMAND)) {
-            CMD_TOGGLE -> NoteStore.toggle(context, widgetId, noteId)
-            CMD_DELETE -> NoteStore.delete(context, widgetId, noteId)
-            else -> return
+
+        if (action == ACTION_TOGGLE_REORDER) {
+            NoteStore.toggleReorderMode(context, widgetId)
+        } else {
+            val noteId = intent.getLongExtra(EXTRA_NOTE_ID, -1L)
+            when (intent.getStringExtra(EXTRA_COMMAND)) {
+                CMD_TOGGLE -> NoteStore.toggle(context, widgetId, noteId)
+                CMD_DELETE -> NoteStore.delete(context, widgetId, noteId)
+                CMD_UP -> NoteStore.move(context, widgetId, noteId, -1)
+                CMD_DOWN -> NoteStore.move(context, widgetId, noteId, 1)
+                else -> return
+            }
         }
         refresh(context, widgetId)
     }
 
     companion object {
         private const val ACTION_ITEM = "com.manninghouse.notes.ITEM_CLICK"
+        private const val ACTION_TOGGLE_REORDER = "com.manninghouse.notes.TOGGLE_REORDER"
         private const val EXTRA_NOTE_ID = "note_id"
         private const val EXTRA_COMMAND = "command"
         private const val CMD_TOGGLE = "toggle"
         private const val CMD_DELETE = "delete"
+        private const val CMD_UP = "up"
+        private const val CMD_DOWN = "down"
 
         fun allWidgetIds(context: Context): IntArray =
             AppWidgetManager.getInstance(context)
@@ -52,6 +73,7 @@ class NotesWidget : AppWidgetProvider() {
 
         private fun updateWidget(context: Context, manager: AppWidgetManager, widgetId: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_notes)
+            val reorder = NoteStore.isReorderMode(context, widgetId)
 
             // Title (tap to rename this list)
             views.setTextViewText(
@@ -63,6 +85,22 @@ class NotesWidget : AppWidgetProvider() {
                 activityIntent(context, widgetId, AddNoteActivity.ACTION_RENAME)
             )
 
+            // Reorder mode button (highlighted while on)
+            views.setImageViewResource(
+                R.id.reorder_button,
+                if (reorder) R.drawable.ic_reorder_active else R.drawable.ic_reorder
+            )
+            val toggleIntent = Intent(context, NotesWidget::class.java)
+                .setAction(ACTION_TOGGLE_REORDER)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            views.setOnClickPendingIntent(
+                R.id.reorder_button,
+                PendingIntent.getBroadcast(
+                    context, widgetId, toggleIntent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            )
+
             // "+" button opens the add-note popup for THIS widget
             views.setOnClickPendingIntent(
                 R.id.add_button,
@@ -70,12 +108,18 @@ class NotesWidget : AppWidgetProvider() {
             )
 
             // This widget's notes
+            val notes = NoteStore.load(context, widgetId)
             val items = RemoteViews.RemoteCollectionItems.Builder().setHasStableIds(true)
-            for (note in NoteStore.load(context, widgetId)) items.addItem(note.id, buildRow(context, note))
+            notes.forEachIndexed { i, note ->
+                items.addItem(
+                    note.id,
+                    buildRow(context, note, reorder, isFirst = i == 0, isLast = i == notes.size - 1)
+                )
+            }
             views.setRemoteAdapter(R.id.notes_list, items.build())
             views.setEmptyView(R.id.notes_list, R.id.empty_text)
 
-            // Taps inside the list (check / delete) come back here, tagged with this widget's id
+            // Taps inside the list come back here, tagged with this widget's id
             val template = Intent(context, NotesWidget::class.java)
                 .setAction(ACTION_ITEM)
                 .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
@@ -101,7 +145,9 @@ class NotesWidget : AppWidgetProvider() {
             )
         }
 
-        private fun buildRow(context: Context, note: Note): RemoteViews {
+        private fun buildRow(
+            context: Context, note: Note, reorder: Boolean, isFirst: Boolean, isLast: Boolean
+        ): RemoteViews {
             val row = RemoteViews(context.packageName, R.layout.widget_item)
             val done = note.isChecklist && note.done
 
@@ -124,15 +170,25 @@ class NotesWidget : AppWidgetProvider() {
                 if (done) R.color.widget_subtext else R.color.widget_text
             )
 
-            row.setOnClickFillInIntent(
-                R.id.row_root,
-                Intent().putExtra(EXTRA_NOTE_ID, note.id).putExtra(EXTRA_COMMAND, CMD_TOGGLE)
+            // Reorder mode: show arrows, hide delete (no accidental deletes while moving)
+            row.setViewVisibility(
+                R.id.move_up,
+                if (!reorder) View.GONE else if (isFirst) View.INVISIBLE else View.VISIBLE
             )
-            row.setOnClickFillInIntent(
-                R.id.delete_button,
-                Intent().putExtra(EXTRA_NOTE_ID, note.id).putExtra(EXTRA_COMMAND, CMD_DELETE)
+            row.setViewVisibility(
+                R.id.move_down,
+                if (!reorder) View.GONE else if (isLast) View.INVISIBLE else View.VISIBLE
             )
+            row.setViewVisibility(R.id.delete_button, if (reorder) View.GONE else View.VISIBLE)
+
+            row.setOnClickFillInIntent(R.id.row_root, command(note.id, CMD_TOGGLE))
+            row.setOnClickFillInIntent(R.id.delete_button, command(note.id, CMD_DELETE))
+            row.setOnClickFillInIntent(R.id.move_up, command(note.id, CMD_UP))
+            row.setOnClickFillInIntent(R.id.move_down, command(note.id, CMD_DOWN))
             return row
         }
+
+        private fun command(noteId: Long, cmd: String): Intent =
+            Intent().putExtra(EXTRA_NOTE_ID, noteId).putExtra(EXTRA_COMMAND, cmd)
     }
 }

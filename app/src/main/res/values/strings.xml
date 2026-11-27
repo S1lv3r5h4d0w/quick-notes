@@ -15,4 +15,7 @@
     <string name="rename_list">Rename list</string>
     <string name="title_hint">List name</string>
     <string name="no_widget">Use the + on a widget to add notes.</string>
+    <string name="reorder">Reorder notes</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
 </resources>
